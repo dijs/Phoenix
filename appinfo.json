@@ -1,0 +1,45 @@
+{
+    "uuid": "209bbc4b-644f-46d2-89ec-397bee3156b6",
+    "capabilities": [
+        ""
+    ],
+    "appKeys": {},
+    "resources": {
+        "media": [
+            {
+                "name": "MENU_IMAGE",
+                "type": "png",
+                "file": "images/menu.png",
+                "menuIcon": true
+            },
+            {
+                "name": "CREEP_WEAK_IMAGE",
+                "type": "png",
+                "file": "images/creep_weak.png"
+            },
+            {
+                "name": "SHIP_WEAK_IMAGE",
+                "type": "png",
+                "file": "images/ship_weak.png"
+            },
+            {
+                "name": "CREEP_IMAGE",
+                "type": "png",
+                "file": "images/creep.png"
+            },
+            {
+                "name": "SHIP_IMAGE",
+                "type": "png",
+                "file": "images/ship.png"
+            }
+        ]
+    },
+    "versionCode": 1,
+    "shortName": "Phoenix",
+    "longName": "Phoenix",
+    "watchapp": {
+        "watchface": false
+    },
+    "companyName": "Richard van der Dys",
+    "versionLabel": "1.0"
+}
