@@ -29,12 +29,6 @@
 #define ACCEL_MID 24
 #define INITIAL_SCORE 100
 
-// https://cloudpebble.net/ide/project/57655
-// https://developer.getpebble.com/2/distribute/publish-to-pebble-appstore.html
-// http://www.ticalc.org/archives/files/fileinfo/148/14876.html
-
-// MAX RAM ALLOWED = 24576 bytes
-
 Window *window;
 Layer *windowLayer;
 Layer *layer;
@@ -183,7 +177,7 @@ bool checkForCreepHit(int creepIndex){
         bulletPostions[i] = windowBounds.size.h;
         // Hurt creep
         creepHealth[creepIndex] -= (gunPowerUp ? 2 : 1);
-        if(creepHealth[creepIndex] == 0){
+        if(creepHealth[creepIndex] <= 0){
           // Creep killed
           score += creepScore;
           // Did we win the level?
@@ -255,17 +249,16 @@ void drawCreeps(GContext* ctx){
     cx = 0;
     for(x = 0; x < creepColCount; x++){
       i = creepColCount * y + x;      
-      // If still alive
+      // render if still alive
       if(creepHealth[i] > 0){
         creepBounds.origin.x = creepGroupBounds.origin.x + cx;
         creepBounds.origin.y = creepGroupBounds.origin.y + cy;
         graphics_draw_bitmap_in_rect(ctx, creepHealth[i] == 1 ? creepWeakBitmap : creepBitmap, creepBounds);
-        // Draw its bullet if there
-        if(creepBulletsY[i] != -1){
-          bulletRenderPoint.x = creepBulletsX[i];
-          bulletRenderPoint.y = creepBulletsY[i];
-          graphics_fill_circle(ctx, bulletRenderPoint, BULLET_RADIUS);
-        }
+      }
+      if(creepBulletsY[i] != -1){
+        bulletRenderPoint.x = creepBulletsX[i];
+        bulletRenderPoint.y = creepBulletsY[i];
+        graphics_fill_circle(ctx, bulletRenderPoint, BULLET_RADIUS);
       }
       cx += creepBounds.size.w + padding;
     }
