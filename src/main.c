@@ -15,19 +15,19 @@
 #define DOUBLE_GUN 1
 #define TRIPLE_GUN 2
 #define FULL_SHIP_HEALTH 4
-#define LEVEL 0
-#define STORE 1
-#define GET_READY 2 
-#define GAME_OVER 3
 #define INITIAL_READY_COUNT 3
 #define SHIP_MOVEMENT_SPEED 2
-#define SHIP_FIRE_TIME_LAG 8
-#define BULLET_SPEED 2
+#define SHIP_FIRE_TIME_LAG 10
 #define BULLET_RADIUS 1
 #define BULLET_WIDTH 2
-#define MAX_BULLETS_ON_SCREEN 32
-#define ACCEL_MID 24
-#define INITIAL_SCORE 100
+#define MAX_PLAYER_BULLETS 64
+#define MAX_CREEP_BULLETS 64
+#define ACCEL_MID 16 // started with 32...
+#define INITIAL_SCORE 1000
+#define INITIAL_GUN_POWER 1
+#define MAX_CREEPS 32
+
+typedef enum { Level, Store, GetReady, GameOver } GameState;
 
 Window *window;
 Layer *windowLayer;
@@ -42,93 +42,140 @@ GRect shipBounds;
 GRect bulletBounds;
 GRect creepBounds;
 GRect creepGroupBounds;
-GPoint bulletRenderPoint;
 AccelData accelData;
-int padding = 8;  
+
+int padding = 8;
 int possibleNextPosition;
 int rightWall, leftWall;
 int bottom;
-int maxBulletsInRow;
 int lastPlayerFireTime = 0;
-int bulletRow;
-int movement;
-int currentBulletIndex;
-int* bulletPostions;
-int* bulletRows;
-int creepRowCount = 2;
-int creepColCount = 8;
+
 int creepFullHealth = 2;
-int* creepHealth;
+
+/*int creepRowCount = 2;
+int creepColCount = 8;
+int* creepHealth;*/
+
+// const char* levelPatterns[1] = { "0cccccc0" };
+
 bool creepGroupMovingLeft = true;
 int creepScore = CREEP_INITIAL_SCORE;
 int creepCount;
 int creepsLeft;
-int* creepBulletsX;
-int* creepBulletsY;
+
 int shipHealth = FULL_SHIP_HEALTH;
 int level = 1;
 int score = INITIAL_SCORE;
 char scoreText[12];
 char levelText[8];
 int gameTime = 0;
-int gameState = GET_READY;
 char readyText[4];
 int readyStepsLeft = STEPS_IN_SECOND;
 int readyCount = INITIAL_READY_COUNT;
 int storeSelectionCosts[4] = {100, 200, 300, 500};
 int gunType = DEFAULT_GUN;
-int gunPowerUp = false;
 int storeSelection = 0;
 bool isPaused = false;
 
-int getNextBulletIndex(){
-  int next = bulletPostions[currentBulletIndex] == windowBounds.size.h ? currentBulletIndex : -1;
-  if(next != -1) currentBulletIndex = (currentBulletIndex + 1) % MAX_BULLETS_ON_SCREEN;
-  return next;
+typedef struct {
+  bool visible;
+  GPoint pos;
+  GPoint vel;
+} Bullet;
+
+typedef struct {
+  GameState state;
+} Game;
+
+typedef struct {
+  int health;
+  GRect bounds;
+} Creep;
+
+Bullet playerBullets[MAX_PLAYER_BULLETS];
+Bullet creepBullets[MAX_CREEP_BULLETS];
+
+Creep creeps[MAX_CREEPS];// max creeps...
+
+Game game;
+
+int currentPlayerBullet = 0;
+int currentGunPower = INITIAL_GUN_POWER;
+int currentCreepBullet = 0;
+
+// Reuse indexes here maybe...
+
+void forEachPlayerBullet(void (*f)(Bullet*)){
+  for(int index = 0; index < MAX_PLAYER_BULLETS; index++)
+    (*f)(&playerBullets[index]);
 }
 
-int getShipBulletRow(){
-  return (shipBounds.origin.x + ship->bounds.size.w / 2) / BULLET_WIDTH;
+void forEachCreepBullet(void (*f)(Bullet*)){
+  for(int index = 0; index < MAX_CREEP_BULLETS; index++)
+    (*f)(&creepBullets[index]);
 }
 
 void updateShipPosition(){
   accel_service_peek(&accelData);
   if(ABS(accelData.x) > ACCEL_MID){
-    movement = accelData.x < 0 ? -SHIP_MOVEMENT_SPEED : SHIP_MOVEMENT_SPEED;
+    int movement = accelData.x < 0 ? -SHIP_MOVEMENT_SPEED : SHIP_MOVEMENT_SPEED;
     possibleNextPosition = shipBounds.origin.x + movement;
-    shipBounds.origin.x = MAX(MIN(possibleNextPosition, rightWall), padding);  
+    shipBounds.origin.x = MAX(MIN(possibleNextPosition, rightWall), padding);
   }
 }
 
-void updatePlayerBullets(){
-  for(int i = 0; i < MAX_BULLETS_ON_SCREEN; i++){
-    int pos = bulletPostions[i];
-    if(pos < windowBounds.size.h){
-      pos -= BULLET_SPEED;
-      if(pos <= 0) pos = windowBounds.size.h;
-      bulletPostions[i] = pos;
+void updateBullet(Bullet* bullet){
+  if(bullet->visible){
+    if(grect_contains_point(&windowBounds, &bullet->pos)){
+      bullet->pos.x += bullet->vel.x;
+      bullet->pos.y += bullet->vel.y;
+    }else{
+      bullet->visible = false;
     }
   }
 }
 
-void fireAt(int row){
-  int nextIndex = getNextBulletIndex();
-  if(nextIndex != -1){
-    bulletPostions[nextIndex] = bottom;
-    bulletRows[nextIndex] = row;
-  }
+// Might want to use a bitvector to assign visible or not...
+// Update velocity for special types, will need time...
+// position might need ot be float...  
+
+void fireBullet(Bullet* bullet, int x, int y, int vx, int vy){
+  bullet->visible = true;
+  bullet->pos.x = x;
+  bullet->pos.y = y;
+  bullet->vel.x = vx;
+  bullet->vel.y = vy;
 }
 
-void firePlayerBullet(){
-  int row = getShipBulletRow();
+void firePlayerGunAt(int x, int y, int vx, int vy){
+  currentPlayerBullet = (currentPlayerBullet + 1) % MAX_PLAYER_BULLETS;
+  fireBullet(&playerBullets[currentPlayerBullet], x, y, vx, vy);
+}
+
+void fireCreepGun(Creep* creep, int vx, int vy){
+  currentCreepBullet = (currentCreepBullet + 1) % MAX_CREEP_BULLETS;
+  fireBullet(
+    &creepBullets[currentCreepBullet], 
+    creep->bounds.origin.x + creep->bounds.size.w / 2,
+    creep->bounds.origin.y + creep->bounds.size.h,
+    vx,
+    vy
+  );
+}
+
+void firePlayerGun(){
   bool isTriple = gunType == TRIPLE_GUN;
   bool isDouble = gunType == DOUBLE_GUN;
   bool isDefault = gunType == DEFAULT_GUN;
-  if(isDefault || isTriple) fireAt(row);
-  if(isDouble || isTriple){
-    fireAt(row - 2);
-    fireAt(row + 2);
+  int x = shipBounds.origin.x + ship->bounds.size.w / 2;
+  if(isDefault || isTriple){
+    firePlayerGunAt(x, bottom, 0, -1);
   }
+  if(isDouble || isTriple){
+    firePlayerGunAt(x - 2, bottom, -1, -1);
+    firePlayerGunAt(x + 2, bottom, 1, -1);
+  }
+  // Change this for gun speed power up
   lastPlayerFireTime = SHIP_FIRE_TIME_LAG;
 }
 
@@ -136,48 +183,39 @@ bool playerGunReady(){
   return !lastPlayerFireTime--;
 }
 
-void drawPlayerBullets(GContext* ctx){
-  for(int i = 0; i < MAX_BULLETS_ON_SCREEN; i++){
-    if(bulletPostions[i] < windowBounds.size.h){
-      bulletRenderPoint.x = BULLET_WIDTH * bulletRows[i];
-      bulletRenderPoint.y = bulletPostions[i];
-      graphics_fill_circle(ctx, bulletRenderPoint, BULLET_RADIUS);
-    }
-  }
+void hideBullet(Bullet* bullet){
+  bullet->visible = false;
 }
 
 void resetLevel(){
   creepsLeft = creepCount;
-  for(int i = 0; i < creepCount; i++){
-    creepHealth[i] = creepFullHealth;
-    creepBulletsY[i] = -1;
-    creepBulletsX[i] = 0;
+  // for loop later...
+  for(int index = 0; index < creepCount; index++){
+    Creep* creep = &creeps[index];
+    creep->health = creepFullHealth;
   }
-  for(int i = 0; i < MAX_BULLETS_ON_SCREEN; i++){
-    bulletPostions[i] = windowBounds.size.h;
-    bulletRows[i] = -1;
-  }
+  forEachPlayerBullet(hideBullet);
+  forEachCreepBullet(hideBullet);
 }
 
 void handleLevelWin(){
   level++;
   creepFullHealth++;
-  creepScore++;
+  creepScore += 5;
   storeSelection = 0;
-  gameState = STORE;
+  game.state = Store;
 }
 
-bool checkForCreepHit(int creepIndex){
-  for(int i = 0; i < MAX_BULLETS_ON_SCREEN; i++){
-    if(bulletPostions[i] < windowBounds.size.h){
-      bulletRenderPoint.x = BULLET_WIDTH * bulletRows[i];
-      bulletRenderPoint.y = bulletPostions[i];
-      if(grect_contains_point(&creepBounds, &bulletRenderPoint)){
+bool checkForCreepHit(Creep* creep){
+  for(int index = 0; index < MAX_PLAYER_BULLETS; index++){
+    Bullet* bullet = &playerBullets[index];
+    if(bullet->visible){
+      if(grect_contains_point(&creep->bounds, &bullet->pos)){
         // Reset bullet on hit
-        bulletPostions[i] = windowBounds.size.h;
+        bullet->visible = false;
         // Hurt creep
-        creepHealth[creepIndex] -= (gunPowerUp ? 2 : 1);
-        if(creepHealth[creepIndex] <= 0){
+        creep->health -= currentGunPower;
+        if(!isCreepAlive(creep)){
           // Creep killed
           score += creepScore;
           // Did we win the level?
@@ -190,42 +228,34 @@ bool checkForCreepHit(int creepIndex){
   return false;
 }
 
-bool creepShouldFire(int index){
-  return creepBulletsY[index] == -1 && (rand() % 100) < 10;
+bool creepShouldFire(int i){
+  return creepHealth[i] > 0 && (rand() % 1000) < 5;
+}
+
+void handlePlayerHit(Bullet* bullet){
+  if(--shipHealth == 0) game.state = GameOver;
+  hideBullet(bullet);
+}
+
+void checkForPlayerHit(Bullet* bullet){
+  // Check if creep bullet hit our ship
+  if(bullet->visible && grect_contains_point(&shipBounds, &bullet->pos)){
+    handlePlayerHit(bullet);
+  }
 }
 
 void updateCreeps(){
   
-  // Check if any creeps are hit
-  int cy = 0, y = 0, cx, x, i;
-  for(; y < creepRowCount; y++){
-    cx = 0;
-    for(x = 0; x < creepColCount; x++){ 
-      i = creepColCount * y + x;
-      if(creepHealth[i] > 0){
-        creepBounds.origin.x = creepGroupBounds.origin.x + cx;
-        creepBounds.origin.y = creepGroupBounds.origin.y + cy;
-        checkForCreepHit(i);
-        if(creepShouldFire(i)){
-          creepBulletsX[i] = creepBounds.origin.x + creepBounds.size.w / 2;
-          creepBulletsY[i] = creepBounds.origin.y + creepBounds.size.h;
-        }
-      }
-      if(creepBulletsY[i] != -1){
-        // Check if creep bullet hit our ship
-        bulletRenderPoint.x = creepBulletsX[i];
-        bulletRenderPoint.y = creepBulletsY[i];
-        bool hit = grect_contains_point(&shipBounds, &bulletRenderPoint);
-        if(hit && --shipHealth == 0) gameState = GAME_OVER;
-        if(hit || ++creepBulletsY[i] == windowBounds.size.h) creepBulletsY[i] = -1;
-      }
-      cx += creepBounds.size.w + padding;
+  for(int index = 0; index < MAX_CREEPS; index++){
+    Creep* creep = &creeps[index];
+    if(isCreepAlive(creep)){
+      checkForCreepHit(creep);
+      if(creepShouldFire(i)) fireCreepGun(creep, 0, 1);
     }
-    cy += creepBounds.size.h + padding;
   }
 
   // Move creep group
-  if(gameTime % 2 == 0){
+  /*if(gameTime % 2 == 0){
     if(creepGroupMovingLeft){
       if(creepGroupBounds.origin.x > leftWall){
         creepGroupBounds.origin.x--;
@@ -239,30 +269,36 @@ void updateCreeps(){
         creepGroupMovingLeft = true;
       }
     }
-  }
+  }*/
 
 }
 
+void drawPlayerBullets(GContext* ctx){
+  for(int i = 0; i < MAX_PLAYER_BULLETS; i++)
+    if(playerBullets[i].visible)
+      graphics_fill_circle(ctx, playerBullets[i].pos, BULLET_RADIUS);
+}
+
+void drawCreepBullets(GContext* ctx){
+  for(int i = 0; i < MAX_CREEP_BULLETS; i++)
+    if(creepBullets[i].visible)
+      graphics_fill_circle(ctx, creepBullets[i].pos, BULLET_RADIUS);
+}
+
+bool isCreepAlive(Creep* creep){
+  return creep->health > 0;
+}
+
+bool isCreepWeak(Creep* creep){
+  return creep->health == 1;
+}
+
 void drawCreeps(GContext* ctx){
-  int cy = 0, y = 0, cx, x, i;
-  for(; y < creepRowCount; y++){
-    cx = 0;
-    for(x = 0; x < creepColCount; x++){
-      i = creepColCount * y + x;      
-      // render if still alive
-      if(creepHealth[i] > 0){
-        creepBounds.origin.x = creepGroupBounds.origin.x + cx;
-        creepBounds.origin.y = creepGroupBounds.origin.y + cy;
-        graphics_draw_bitmap_in_rect(ctx, creepHealth[i] == 1 ? creepWeakBitmap : creepBitmap, creepBounds);
-      }
-      if(creepBulletsY[i] != -1){
-        bulletRenderPoint.x = creepBulletsX[i];
-        bulletRenderPoint.y = creepBulletsY[i];
-        graphics_fill_circle(ctx, bulletRenderPoint, BULLET_RADIUS);
-      }
-      cx += creepBounds.size.w + padding;
+  for(int index = 0; index < MAX_CREEPS; index++){
+    Creep* creep = &creeps[index];
+    if(isCreepAlive(creep)){
+      graphics_draw_bitmap_in_rect(ctx, isCreepWeak(creep) ? creepWeakBitmap : creepBitmap, creep->bounds);
     }
-    cy += creepBounds.size.h + padding;
   }
 }
 
@@ -295,7 +331,7 @@ void drawScoreAndLevel(GContext* ctx){
   drawText(ctx, scoreText, GRect(windowBounds.size.w - 32, 2, 32, 8));
   snprintf(levelText, 8, "Lvl %d", level);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
-  if(gameState == GAME_OVER){
+  if(game.state == GameOver){
     drawBoldText(ctx, "Press select to play again", GRect(16, 32, 128, 32));
   }
 }
@@ -346,10 +382,14 @@ void drawStore(GContext* ctx){
 
 }
 
+void drawShip(GContext* ctx){
+  graphics_draw_bitmap_in_rect(ctx, shipHealth == 1 ? shipWeakBitmap : ship, shipBounds);   
+}
+
 void updateGetReady(){
   if(--readyStepsLeft == 0){
     if(--readyCount == 0){
-      gameState = LEVEL;
+      game.state = Level;
       readyCount = INITIAL_READY_COUNT;
     }
     readyStepsLeft = STEPS_IN_SECOND;
@@ -359,13 +399,15 @@ void updateGetReady(){
 // Game loop
 void timer_callback(void *data) {
   gameTime++;
-  if(gameState == LEVEL && !isPaused){
+  if(game.state == Level && !isPaused){
+    forEachPlayerBullet(updateBullet);
+    forEachCreepBullet(updateBullet);
     updateShipPosition();
-    updatePlayerBullets();
     updateCreeps();
-    if(playerGunReady()) firePlayerBullet();
+    forEachCreepBullet(checkForPlayerHit);
+    if(playerGunReady()) firePlayerGun();
   }
-  if(gameState == GET_READY) updateGetReady();
+  if(game.state == GetReady) updateGetReady();
   // Redraw
   layer_mark_dirty(layer);
   // Ask for another loop
@@ -376,32 +418,33 @@ void timer_callback(void *data) {
 void layer_update_callback(Layer *me, GContext* ctx) {
   graphics_context_set_text_color(ctx, GColorBlack);
   drawScoreAndLevel(ctx);
-  if(gameState == LEVEL || gameState == GET_READY){
-    graphics_draw_bitmap_in_rect(ctx, shipHealth == 1 ? shipWeakBitmap : ship, shipBounds);
+  if(game.state == Level || game.state == GetReady){
+    drawShip(ctx);
     drawPlayerBullets(ctx);
+    drawCreepBullets(ctx);
     drawCreeps(ctx);
   }
-  if(gameState == GET_READY) drawGetReady(ctx);
-  if(gameState == STORE) drawStore(ctx);
+  if(game.state == GetReady) drawGetReady(ctx);
+  if(game.state == Store) drawStore(ctx);
 }
 
 void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if(gameState == GAME_OVER){
+  if(game.state == GameOver){
     score = INITIAL_SCORE;
     level = 1;
     shipHealth = FULL_SHIP_HEALTH;
-    gameState = GET_READY;
+    game.state = GetReady;
     gunType = DEFAULT_GUN;
-    gunPowerUp = false;
+    currentGunPower = INITIAL_GUN_POWER;
     creepScore = CREEP_INITIAL_SCORE;
     resetLevel();
   }
-  if(gameState == LEVEL){
+  if(game.state == Level){
     isPaused = !isPaused;
   }
-  if(gameState == STORE){
+  if(game.state == Store){
     if(storeSelection == DONE_SELECTION){
-      gameState = GET_READY;
+      game.state = GetReady;
       resetLevel();
     }else{
       if(score >= storeSelectionCosts[storeSelection]){
@@ -412,7 +455,8 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
             shipHealth++;
             break;
           case POWER_UP_SELECTION:
-            gunPowerUp = true;
+            // Need max...
+            currentGunPower++;
             break;
           case DOUBLE_GUN_SELECTION:
             gunType = DOUBLE_GUN;
@@ -430,11 +474,19 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
 }
 
 void up_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  storeSelection = MAX(storeSelection - 1, 0);
+  if(storeSelection == 0){
+    storeSelection = 4;
+  }else{
+    storeSelection--;
+  }
 }
 
 void down_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  storeSelection = MIN(storeSelection + 1, 4);
+  if(storeSelection == 4){
+    storeSelection = 0;
+  }else{
+    storeSelection++;
+  }
 }
 
 void config_provider(void *context) {
@@ -448,6 +500,8 @@ void config_provider(void *context) {
 
 void handle_init(void) {
   
+  game.state = GetReady;
+
   // Init Window
   window = window_create();
   window_stack_push(window, true);
@@ -478,30 +532,30 @@ void handle_init(void) {
   );
 
   // Init creep positions
-  creepBounds = GRect(0, 0, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
+  /*creepBounds = GRect(0, 0, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
   creepGroupBounds = GRect(
     0,
-    16,
+    24,
     creepBounds.size.w * creepColCount + padding * (creepColCount - 1),
     creepBounds.size.h * creepRowCount + padding * (creepRowCount - 1)
   );
-  creepGroupBounds.origin.x = windowBounds.size.w / 2 - creepGroupBounds.size.w / 2;
+  creepGroupBounds.origin.x = windowBounds.size.w / 2 - creepGroupBounds.size.w / 2;*/
 
-  creepCount = creepRowCount * creepColCount;
-  int n = creepCount * sizeof(int);
-  creepHealth = malloc(n);
-  creepBulletsX = malloc(n);
-  creepBulletsY = malloc(n);
+  //creepCount = creepRowCount * creepColCount;
+  //int n = creepCount * sizeof(int);
+  //creepHealth = malloc(n);
+  //
+  creepCount = 16;
+  int cy = 0, y, cx, x, i;
+  for(y = 0; y < 2; y++){
+    cx = 0;
+    for(x = 0; x < 8; x++){ 
+      creeps[i++] = Creep(creepFullHealth, GRect(cx, cy, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h));      
+      cx += creepBitmap->bounds.size.w + padding;
+    }
+    cy += creepBitmap->bounds.size.h + padding;
+  }
   
-  // Init bullets
-  maxBulletsInRow = (windowBounds.size.w - padding * 2) / BULLET_WIDTH;
-  
-  n = MAX_BULLETS_ON_SCREEN * sizeof(int);
-  bulletPostions = malloc(n);
-  bulletRows = malloc(n);
-  
-  bulletRenderPoint = GPoint(0, 0);
-
   resetLevel();
 
   // Init accelerometer callback
@@ -522,11 +576,6 @@ void handle_deinit() {
   gbitmap_destroy(creepWeakBitmap);
   layer_destroy(layer);
   window_destroy(window);
-  free(bulletPostions);
-  free(bulletRows);
-  free(creepHealth);
-  free(creepBulletsX);
-  free(creepBulletsY);
 }
 
 int main(void) {
