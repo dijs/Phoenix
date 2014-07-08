@@ -2,9 +2,12 @@
 
 #define ACCEL_STEP_MS 30
 #define STEPS_IN_SECOND 1000 / ACCEL_STEP_MS
+
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #define ABS(a) ((a > 0) ? (a) : (-a))
+#define NELEMS(x) (sizeof(x) / sizeof(x[0]))
+
 #define CREEP_INITIAL_SCORE 10
 #define EXTRA_LIFE_SELECTION 0
 #define POWER_UP_SELECTION 1
@@ -25,9 +28,11 @@
 #define ACCEL_MID 16 // started with 32...
 #define INITIAL_SCORE 1000
 #define INITIAL_GUN_POWER 1
-#define MAX_CREEPS 32
+#define ASCII_ZERO 48
+#define WALL 0
+#define DISTANCE 1
 
-typedef enum { Level, Store, GetReady, GameOver } GameState;
+typedef enum { LevelState, StoreState, GetReadyState, GameOverState } GameState;
 
 Window *window;
 Layer *windowLayer;
@@ -40,8 +45,6 @@ AppTimer *timer;
 GRect windowBounds;
 GRect shipBounds;
 GRect bulletBounds;
-GRect creepBounds;
-GRect creepGroupBounds;
 AccelData accelData;
 
 int padding = 8;
@@ -50,21 +53,12 @@ int rightWall, leftWall;
 int bottom;
 int lastPlayerFireTime = 0;
 
-int creepFullHealth = 2;
+int creepFullHealth = 7;
 
-/*int creepRowCount = 2;
-int creepColCount = 8;
-int* creepHealth;*/
-
-// const char* levelPatterns[1] = { "0cccccc0" };
-
-bool creepGroupMovingLeft = true;
 int creepScore = CREEP_INITIAL_SCORE;
-int creepCount;
 int creepsLeft;
 
 int shipHealth = FULL_SHIP_HEALTH;
-int level = 1;
 int score = INITIAL_SCORE;
 char scoreText[12];
 char levelText[8];
@@ -84,18 +78,35 @@ typedef struct {
 } Bullet;
 
 typedef struct {
-  GameState state;
-} Game;
+  GPoint delta;
+  int conditionType;
+  int distance;
+} MovementRule;
 
 typedef struct {
   int health;
+  GPoint initialPosition;
   GRect bounds;
+  MovementRule* rules;
+  int ruleCount;
+  int currentRule;
+  int traveled;
 } Creep;
+
+typedef struct {
+  Creep* creeps;
+  int creepCount;
+} Level;
+
+typedef struct {
+  GameState state;
+  Level* levels;
+  int levelCount;
+  int currentLevel;
+} Game;
 
 Bullet playerBullets[MAX_PLAYER_BULLETS];
 Bullet creepBullets[MAX_CREEP_BULLETS];
-
-Creep creeps[MAX_CREEPS];// max creeps...
 
 Game game;
 
@@ -188,22 +199,36 @@ void hideBullet(Bullet* bullet){
 }
 
 void resetLevel(){
-  creepsLeft = creepCount;
-  // for loop later...
-  for(int index = 0; index < creepCount; index++){
-    Creep* creep = &creeps[index];
+  Level* level = &game.levels[game.currentLevel];
+  creepsLeft = level->creepCount;
+  for(int index = 0; index < level->creepCount; index++){
+    app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep %d", index);
+    Creep* creep = &level->creeps[index];
+    app_log(APP_LOG_LEVEL_INFO, "main", 513, "Health: %d", creep->health);
     creep->health = creepFullHealth;
+    creep->currentRule = 0;
+    creep->traveled = 0;
+    creep->bounds.origin.x = creep->initialPosition.x;
+    creep->bounds.origin.y = creep->initialPosition.y; 
   }
   forEachPlayerBullet(hideBullet);
   forEachCreepBullet(hideBullet);
 }
 
 void handleLevelWin(){
-  level++;
+  game.currentLevel++;
   creepFullHealth++;
   creepScore += 5;
   storeSelection = 0;
-  game.state = Store;
+  game.state = StoreState;
+}
+
+bool isCreepAlive(Creep* creep){
+  return creep->health > 0;
+}
+
+bool isCreepWeak(Creep* creep){
+  return creep->health == 1;
 }
 
 bool checkForCreepHit(Creep* creep){
@@ -228,12 +253,12 @@ bool checkForCreepHit(Creep* creep){
   return false;
 }
 
-bool creepShouldFire(int i){
-  return creepHealth[i] > 0 && (rand() % 1000) < 5;
+bool creepShouldFire(Creep* creep){
+  return creep->health > 0 && (rand() % 1000) < 5;
 }
 
 void handlePlayerHit(Bullet* bullet){
-  if(--shipHealth == 0) game.state = GameOver;
+  if(--shipHealth == 0) game.state = GameOverState;
   hideBullet(bullet);
 }
 
@@ -244,33 +269,39 @@ void checkForPlayerHit(Bullet* bullet){
   }
 }
 
+// Only horizontal right now...
+bool creepOutsideBounds(Creep* creep){
+  return creep->bounds.origin.x < leftWall || (creep->bounds.origin.x + creep->bounds.size.w) > rightWall;
+}
+
+void updateCreepMovement(Creep* creep){
+  MovementRule* rule = &creep->rules[creep->currentRule];
+  creep->bounds.origin.x += rule->delta.x;
+  creep->bounds.origin.y += rule->delta.y;
+  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep Origin (%i,%i) moving with delta (%i,%i) and type %i",
+  //  creep->bounds.origin.x, creep->bounds.origin.y, rule->delta.x, rule->delta.y, rule->conditionType);
+  creep->traveled += ABS(rule->delta.x) + ABS(rule->delta.y);
+  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Wall check (%i,%i)", leftWall, rightWall);
+  bool outsideWall = rule->conditionType == WALL && creepOutsideBounds(creep);
+  bool atDistance = rule->conditionType == DISTANCE && creep->traveled >= rule->distance;
+  // Cycle to next rule if needed
+  if(outsideWall || atDistance){
+    creep->currentRule = (creep->currentRule + 1) % creep->ruleCount;
+    creep->traveled = 0;
+    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Cycle next move");
+  }
+}
+
 void updateCreeps(){
-  
-  for(int index = 0; index < MAX_CREEPS; index++){
-    Creep* creep = &creeps[index];
+  Level* level = &game.levels[game.currentLevel];
+  for(int index = 0; index < level->creepCount; index++){
+    Creep* creep = &level->creeps[index];
     if(isCreepAlive(creep)){
+      updateCreepMovement(creep);
       checkForCreepHit(creep);
-      if(creepShouldFire(i)) fireCreepGun(creep, 0, 1);
+      if(creepShouldFire(creep)) fireCreepGun(creep, 0, 1);
     }
   }
-
-  // Move creep group
-  /*if(gameTime % 2 == 0){
-    if(creepGroupMovingLeft){
-      if(creepGroupBounds.origin.x > leftWall){
-        creepGroupBounds.origin.x--;
-      }else{
-        creepGroupMovingLeft = false;
-      }
-    }else{
-      if(creepGroupBounds.origin.x + creepGroupBounds.size.w < rightWall){
-        creepGroupBounds.origin.x++;
-      }else{
-        creepGroupMovingLeft = true;
-      }
-    }
-  }*/
-
 }
 
 void drawPlayerBullets(GContext* ctx){
@@ -285,17 +316,10 @@ void drawCreepBullets(GContext* ctx){
       graphics_fill_circle(ctx, creepBullets[i].pos, BULLET_RADIUS);
 }
 
-bool isCreepAlive(Creep* creep){
-  return creep->health > 0;
-}
-
-bool isCreepWeak(Creep* creep){
-  return creep->health == 1;
-}
-
 void drawCreeps(GContext* ctx){
-  for(int index = 0; index < MAX_CREEPS; index++){
-    Creep* creep = &creeps[index];
+  Level* level = &game.levels[game.currentLevel];
+  for(int index = 0; index < level->creepCount; index++){
+    Creep* creep = &level->creeps[index];
     if(isCreepAlive(creep)){
       graphics_draw_bitmap_in_rect(ctx, isCreepWeak(creep) ? creepWeakBitmap : creepBitmap, creep->bounds);
     }
@@ -326,12 +350,12 @@ void drawBoldText(GContext* ctx, const char* text, GRect rect){
 
 void drawScoreAndLevel(GContext* ctx){
   snprintf(scoreText, 12, "$%d", score);
-  snprintf(levelText, 8, "Lvl %d", level);
+  snprintf(levelText, 8, "Lvl %d", game.currentLevel);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
   drawText(ctx, scoreText, GRect(windowBounds.size.w - 32, 2, 32, 8));
-  snprintf(levelText, 8, "Lvl %d", level);
+  snprintf(levelText, 8, "Lvl %d", game.currentLevel);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
-  if(game.state == GameOver){
+  if(game.state == GameOverState){
     drawBoldText(ctx, "Press select to play again", GRect(16, 32, 128, 32));
   }
 }
@@ -389,7 +413,7 @@ void drawShip(GContext* ctx){
 void updateGetReady(){
   if(--readyStepsLeft == 0){
     if(--readyCount == 0){
-      game.state = Level;
+      game.state = LevelState;
       readyCount = INITIAL_READY_COUNT;
     }
     readyStepsLeft = STEPS_IN_SECOND;
@@ -399,7 +423,7 @@ void updateGetReady(){
 // Game loop
 void timer_callback(void *data) {
   gameTime++;
-  if(game.state == Level && !isPaused){
+  if(game.state == LevelState && !isPaused){
     forEachPlayerBullet(updateBullet);
     forEachCreepBullet(updateBullet);
     updateShipPosition();
@@ -407,7 +431,7 @@ void timer_callback(void *data) {
     forEachCreepBullet(checkForPlayerHit);
     if(playerGunReady()) firePlayerGun();
   }
-  if(game.state == GetReady) updateGetReady();
+  if(game.state == GetReadyState) updateGetReady();
   // Redraw
   layer_mark_dirty(layer);
   // Ask for another loop
@@ -418,33 +442,33 @@ void timer_callback(void *data) {
 void layer_update_callback(Layer *me, GContext* ctx) {
   graphics_context_set_text_color(ctx, GColorBlack);
   drawScoreAndLevel(ctx);
-  if(game.state == Level || game.state == GetReady){
+  if(game.state == LevelState || game.state == GetReadyState){
     drawShip(ctx);
     drawPlayerBullets(ctx);
     drawCreepBullets(ctx);
     drawCreeps(ctx);
   }
-  if(game.state == GetReady) drawGetReady(ctx);
-  if(game.state == Store) drawStore(ctx);
+  if(game.state == GetReadyState) drawGetReady(ctx);
+  if(game.state == StoreState) drawStore(ctx);
 }
 
 void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if(game.state == GameOver){
+  if(game.state == GameOverState){
     score = INITIAL_SCORE;
-    level = 1;
+    game.currentLevel = 1;
     shipHealth = FULL_SHIP_HEALTH;
-    game.state = GetReady;
+    game.state = GetReadyState;
     gunType = DEFAULT_GUN;
     currentGunPower = INITIAL_GUN_POWER;
     creepScore = CREEP_INITIAL_SCORE;
     resetLevel();
   }
-  if(game.state == Level){
+  if(game.state == LevelState){
     isPaused = !isPaused;
   }
-  if(game.state == Store){
+  if(game.state == StoreState){
     if(storeSelection == DONE_SELECTION){
-      game.state = GetReady;
+      game.state = GetReadyState;
       resetLevel();
     }else{
       if(score >= storeSelectionCosts[storeSelection]){
@@ -498,9 +522,64 @@ void config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_DOWN, down_single_click_handler); 
 }
 
+int getBufferInt(uint8_t buffer[], int index){
+  int value = buffer[index];
+  return value > 128 ? value - 256 : value;
+}
+
+void loadMovementRules() {
+  ResHandle handle = resource_get_handle(RESOURCE_ID_MOVEMENT_RULES);
+  size_t size = resource_size(handle);
+  uint8_t buffer[size];
+  resource_load(handle, buffer, size);
+  
+  int levelIndex, creepIndex, ruleIndex, bufferIndex = 0;
+
+  game.levelCount = buffer[bufferIndex++];
+  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Level Count: %i", game.levelCount);
+
+  game.levels = malloc(sizeof(Level) * game.levelCount);
+  
+  for(levelIndex = 0; levelIndex < game.levelCount; levelIndex++){
+    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Building level %i", levelIndex);
+    Level level;
+    level.creepCount = buffer[bufferIndex++];
+    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep count: %i", level.creepCount);
+    level.creeps = malloc(sizeof(Creep) * level.creepCount);
+    for(creepIndex = 0; creepIndex < level.creepCount; creepIndex++){
+      Creep creep;
+      creep.health = creepFullHealth;
+      creep.currentRule = 0;
+      creep.traveled = 0;
+      creep.initialPosition = GPoint(buffer[bufferIndex++], buffer[bufferIndex++]);
+      creep.bounds = GRect(creep.initialPosition.x, creep.initialPosition.y,
+        creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
+      creep.ruleCount = buffer[bufferIndex++];
+      //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Rule count: %i", creep.ruleCount);
+      creep.rules = malloc(sizeof(MovementRule) * creep.ruleCount);
+      for(ruleIndex = 0; ruleIndex < creep.ruleCount; ruleIndex++){
+        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Building rule %i", ruleIndex);
+        MovementRule rule;
+        int dx = getBufferInt(buffer, bufferIndex++);
+        int dy = getBufferInt(buffer, bufferIndex++);
+        rule.delta = GPoint(dx, dy);
+        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Buffer check (%i,%i)", dx, dy);
+        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Rule count (%i,%i)", rule.delta.x, rule.delta.y);
+        rule.conditionType = buffer[bufferIndex++];
+        rule.distance = buffer[bufferIndex++];
+        creep.rules[ruleIndex] = rule;
+      }
+      level.creeps[creepIndex] = creep;
+    }
+    game.levels[levelIndex] = level; 
+  }
+// i love you honey
+}
+
 void handle_init(void) {
   
-  game.state = GetReady;
+  game.state = GetReadyState;
+  game.currentLevel = 0;
 
   // Init Window
   window = window_create();
@@ -518,6 +597,9 @@ void handle_init(void) {
   creepBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_IMAGE);
   shipWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_SHIP_WEAK_IMAGE);
   creepWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_WEAK_IMAGE);
+  
+  loadMovementRules();
+
   // Init walls
   rightWall = windowBounds.size.w - padding - ship->bounds.size.w;
   leftWall = padding + ship->bounds.size.w;
@@ -531,31 +613,6 @@ void handle_init(void) {
     ship->bounds.size.h
   );
 
-  // Init creep positions
-  /*creepBounds = GRect(0, 0, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
-  creepGroupBounds = GRect(
-    0,
-    24,
-    creepBounds.size.w * creepColCount + padding * (creepColCount - 1),
-    creepBounds.size.h * creepRowCount + padding * (creepRowCount - 1)
-  );
-  creepGroupBounds.origin.x = windowBounds.size.w / 2 - creepGroupBounds.size.w / 2;*/
-
-  //creepCount = creepRowCount * creepColCount;
-  //int n = creepCount * sizeof(int);
-  //creepHealth = malloc(n);
-  //
-  creepCount = 16;
-  int cy = 0, y, cx, x, i;
-  for(y = 0; y < 2; y++){
-    cx = 0;
-    for(x = 0; x < 8; x++){ 
-      creeps[i++] = Creep(creepFullHealth, GRect(cx, cy, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h));      
-      cx += creepBitmap->bounds.size.w + padding;
-    }
-    cy += creepBitmap->bounds.size.h + padding;
-  }
-  
   resetLevel();
 
   // Init accelerometer callback
@@ -565,7 +622,6 @@ void handle_init(void) {
   window_set_click_config_provider_with_context(window, config_provider,  (void*)window);
 
   timer = app_timer_register(ACCEL_STEP_MS, timer_callback, NULL);
-    
 }
 
 void handle_deinit() {
@@ -576,6 +632,15 @@ void handle_deinit() {
   gbitmap_destroy(creepWeakBitmap);
   layer_destroy(layer);
   window_destroy(window);
+  
+  int levelIndex, creepIndex, ruleIndex;
+  for(levelIndex = 0; levelIndex < game.levelCount; levelIndex++){
+    for(creepIndex = 0; creepIndex < game.levels[levelIndex].creepCount; creepIndex++){
+      free(game.levels[levelIndex].creeps[creepIndex].rules);
+    }
+    free(game.levels[levelIndex].creeps);
+  }
+  free(game.levels);
 }
 
 int main(void) {

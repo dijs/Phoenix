@@ -11,6 +11,11 @@
     "resources": {
         "media": [
             {
+                "file": "movement/rules.bin",
+                "name": "MOVEMENT_RULES",
+                "type": "raw"
+            },
+            {
                 "file": "images/menu.png",
                 "menuIcon": true,
                 "name": "MENU_IMAGE",
