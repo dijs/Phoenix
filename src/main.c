@@ -25,7 +25,7 @@
 #define MAX_PLAYER_BULLETS 64
 #define MAX_CREEP_BULLETS 64
 #define ACCEL_MID 16 // started with 32...
-#define INITIAL_MONEY 1000
+#define INITIAL_MONEY 100
 #define INITIAL_GUN_POWER 1
 #define ASCII_ZERO 48
 #define WALL 0
@@ -352,11 +352,9 @@ void drawBoldText(GContext* ctx, const char* text, GRect rect){
 
 void drawScoreAndLevel(GContext* ctx){
   snprintf(moneyText, 12, "$%d", player.money);
-  snprintf(levelText, 8, "Lvl %d", game.currentLevel);
+  snprintf(levelText, 8, "Lvl %d", game.currentLevel + 1);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
   drawText(ctx, moneyText, GRect(windowBounds.size.w - 32, 2, 32, 8));
-  snprintf(levelText, 8, "Lvl %d", game.currentLevel);
-  drawText(ctx, levelText, GRect(2, 2, 64, 8));
   if(game.state == GameOverState){
     drawBoldText(ctx, "Press select to play again", GRect(16, 32, 128, 32));
   }
@@ -415,7 +413,8 @@ void drawShip(GContext* ctx) {
 void drawArmorBar(GContext* ctx) {
   float ratio = (float)player.armor / (float)player.fullArmor;
   int w = (int)(ratio * (float)windowBounds.size.w);
-  graphics_fill_rect(ctx, GRect(0, windowBounds.size.h - 10, w, 5), 0, GCornerNone);
+  int h = 2;
+  graphics_fill_rect(ctx, GRect(0, windowBounds.size.h - h, w, h), 0, GCornerNone);
 }
 
 void updateGetReady(){
