@@ -6,7 +6,6 @@
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #define ABS(a) ((a > 0) ? (a) : (-a))
-#define NELEMS(x) (sizeof(x) / sizeof(x[0]))
 
 #define CREEP_INITIAL_SCORE 10
 #define EXTRA_LIFE_SELECTION 0
@@ -17,7 +16,7 @@
 #define DEFAULT_GUN 0
 #define DOUBLE_GUN 1
 #define TRIPLE_GUN 2
-#define FULL_SHIP_HEALTH 4
+#define INITIAL_SHIP_ARMOR 4
 #define INITIAL_READY_COUNT 3
 #define SHIP_MOVEMENT_SPEED 2
 #define SHIP_FIRE_TIME_LAG 10
@@ -26,7 +25,7 @@
 #define MAX_PLAYER_BULLETS 64
 #define MAX_CREEP_BULLETS 64
 #define ACCEL_MID 16 // started with 32...
-#define INITIAL_SCORE 1000
+#define INITIAL_MONEY 1000
 #define INITIAL_GUN_POWER 1
 #define ASCII_ZERO 48
 #define WALL 0
@@ -49,25 +48,24 @@ AccelData accelData;
 
 int padding = 8;
 int possibleNextPosition;
-int rightWall, leftWall;
+int rightWall, leftWall, topWall, bottomWall;
 int bottom;
+
 int lastPlayerFireTime = 0;
 
-int creepFullHealth = 7;
+int creepFullHealth = 2;
 
 int creepScore = CREEP_INITIAL_SCORE;
 int creepsLeft;
 
-int shipHealth = FULL_SHIP_HEALTH;
-int score = INITIAL_SCORE;
-char scoreText[12];
+char moneyText[12];
 char levelText[8];
+
 int gameTime = 0;
 char readyText[4];
 int readyStepsLeft = STEPS_IN_SECOND;
 int readyCount = INITIAL_READY_COUNT;
 int storeSelectionCosts[4] = {100, 200, 300, 500};
-int gunType = DEFAULT_GUN;
 int storeSelection = 0;
 bool isPaused = false;
 
@@ -108,13 +106,19 @@ typedef struct {
 Bullet playerBullets[MAX_PLAYER_BULLETS];
 Bullet creepBullets[MAX_CREEP_BULLETS];
 
-Game game;
+typedef struct {
+  int armor;
+  int fullArmor;
+  int money;
+} Player;
 
+int gunType = DEFAULT_GUN;
 int currentPlayerBullet = 0;
 int currentGunPower = INITIAL_GUN_POWER;
 int currentCreepBullet = 0;
 
-// Reuse indexes here maybe...
+Game game;
+Player player;
 
 void forEachPlayerBullet(void (*f)(Bullet*)){
   for(int index = 0; index < MAX_PLAYER_BULLETS; index++)
@@ -202,9 +206,7 @@ void resetLevel(){
   Level* level = &game.levels[game.currentLevel];
   creepsLeft = level->creepCount;
   for(int index = 0; index < level->creepCount; index++){
-    app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep %d", index);
     Creep* creep = &level->creeps[index];
-    app_log(APP_LOG_LEVEL_INFO, "main", 513, "Health: %d", creep->health);
     creep->health = creepFullHealth;
     creep->currentRule = 0;
     creep->traveled = 0;
@@ -213,6 +215,7 @@ void resetLevel(){
   }
   forEachPlayerBullet(hideBullet);
   forEachCreepBullet(hideBullet);
+  player.armor = player.fullArmor;
 }
 
 void handleLevelWin(){
@@ -242,7 +245,7 @@ bool checkForCreepHit(Creep* creep){
         creep->health -= currentGunPower;
         if(!isCreepAlive(creep)){
           // Creep killed
-          score += creepScore;
+          player.money += creepScore;
           // Did we win the level?
           if(--creepsLeft == 0) handleLevelWin();
         }
@@ -258,7 +261,7 @@ bool creepShouldFire(Creep* creep){
 }
 
 void handlePlayerHit(Bullet* bullet){
-  if(--shipHealth == 0) game.state = GameOverState;
+  if(--player.armor == -1) game.state = GameOverState;
   hideBullet(bullet);
 }
 
@@ -269,26 +272,25 @@ void checkForPlayerHit(Bullet* bullet){
   }
 }
 
-// Only horizontal right now...
 bool creepOutsideBounds(Creep* creep){
-  return creep->bounds.origin.x < leftWall || (creep->bounds.origin.x + creep->bounds.size.w) > rightWall;
+  MovementRule* rule = &creep->rules[creep->currentRule];
+  int cx = creep->bounds.origin.x;
+  int cy = creep->bounds.origin.y;
+  return (ABS(rule->delta.x) > 0 && (cx <= leftWall || cx >= rightWall)) ||
+    (ABS(rule->delta.y) > 0 && (cy <= topWall || cy >= bottomWall));
 }
 
 void updateCreepMovement(Creep* creep){
   MovementRule* rule = &creep->rules[creep->currentRule];
   creep->bounds.origin.x += rule->delta.x;
   creep->bounds.origin.y += rule->delta.y;
-  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep Origin (%i,%i) moving with delta (%i,%i) and type %i",
-  //  creep->bounds.origin.x, creep->bounds.origin.y, rule->delta.x, rule->delta.y, rule->conditionType);
   creep->traveled += ABS(rule->delta.x) + ABS(rule->delta.y);
-  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Wall check (%i,%i)", leftWall, rightWall);
   bool outsideWall = rule->conditionType == WALL && creepOutsideBounds(creep);
   bool atDistance = rule->conditionType == DISTANCE && creep->traveled >= rule->distance;
   // Cycle to next rule if needed
   if(outsideWall || atDistance){
     creep->currentRule = (creep->currentRule + 1) % creep->ruleCount;
     creep->traveled = 0;
-    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Cycle next move");
   }
 }
 
@@ -349,10 +351,10 @@ void drawBoldText(GContext* ctx, const char* text, GRect rect){
 }
 
 void drawScoreAndLevel(GContext* ctx){
-  snprintf(scoreText, 12, "$%d", score);
+  snprintf(moneyText, 12, "$%d", player.money);
   snprintf(levelText, 8, "Lvl %d", game.currentLevel);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
-  drawText(ctx, scoreText, GRect(windowBounds.size.w - 32, 2, 32, 8));
+  drawText(ctx, moneyText, GRect(windowBounds.size.w - 32, 2, 32, 8));
   snprintf(levelText, 8, "Lvl %d", game.currentLevel);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
   if(game.state == GameOverState){
@@ -382,7 +384,7 @@ void drawStore(GContext* ctx){
   // Current selection
   drawText(ctx, ">", GRect(2, 30 + (lineHeight * 2 * storeSelection), 8, lineHeight));
 
-  drawText(ctx, "Extra Life", GRect(left, y, 64, lineHeight));
+  drawText(ctx, "Armor", GRect(left, y, 64, lineHeight));
   drawText(ctx, "$100", GRect(right, y, 32, lineHeight));
 
   y += lineHeight * 2;
@@ -406,8 +408,14 @@ void drawStore(GContext* ctx){
 
 }
 
-void drawShip(GContext* ctx){
-  graphics_draw_bitmap_in_rect(ctx, shipHealth == 1 ? shipWeakBitmap : ship, shipBounds);   
+void drawShip(GContext* ctx) {
+  graphics_draw_bitmap_in_rect(ctx, player.armor == 0 ? shipWeakBitmap : ship, shipBounds);
+}
+
+void drawArmorBar(GContext* ctx) {
+  float ratio = (float)player.armor / (float)player.fullArmor;
+  int w = (int)(ratio * (float)windowBounds.size.w);
+  graphics_fill_rect(ctx, GRect(0, windowBounds.size.h - 10, w, 5), 0, GCornerNone);
 }
 
 void updateGetReady(){
@@ -444,6 +452,7 @@ void layer_update_callback(Layer *me, GContext* ctx) {
   drawScoreAndLevel(ctx);
   if(game.state == LevelState || game.state == GetReadyState){
     drawShip(ctx);
+    drawArmorBar(ctx);
     drawPlayerBullets(ctx);
     drawCreepBullets(ctx);
     drawCreeps(ctx);
@@ -454,9 +463,9 @@ void layer_update_callback(Layer *me, GContext* ctx) {
 
 void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   if(game.state == GameOverState){
-    score = INITIAL_SCORE;
-    game.currentLevel = 1;
-    shipHealth = FULL_SHIP_HEALTH;
+    player.money = INITIAL_MONEY;
+    player.armor = INITIAL_SHIP_ARMOR;
+    game.currentLevel = 0;
     game.state = GetReadyState;
     gunType = DEFAULT_GUN;
     currentGunPower = INITIAL_GUN_POWER;
@@ -471,12 +480,12 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
       game.state = GetReadyState;
       resetLevel();
     }else{
-      if(score >= storeSelectionCosts[storeSelection]){
+      if(player.money >= storeSelectionCosts[storeSelection]){
         // Make purchase
-        score -= storeSelectionCosts[storeSelection];
+        player.money -= storeSelectionCosts[storeSelection];
         switch(storeSelection){
           case EXTRA_LIFE_SELECTION:
-            shipHealth++;
+            player.fullArmor++;
             break;
           case POWER_UP_SELECTION:
             // Need max...
@@ -533,38 +542,32 @@ void loadMovementRules() {
   uint8_t buffer[size];
   resource_load(handle, buffer, size);
   
+  int x, y, dx, dy;  
   int levelIndex, creepIndex, ruleIndex, bufferIndex = 0;
 
   game.levelCount = buffer[bufferIndex++];
-  //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Level Count: %i", game.levelCount);
-
   game.levels = malloc(sizeof(Level) * game.levelCount);
   
   for(levelIndex = 0; levelIndex < game.levelCount; levelIndex++){
-    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Building level %i", levelIndex);
     Level level;
     level.creepCount = buffer[bufferIndex++];
-    //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Creep count: %i", level.creepCount);
     level.creeps = malloc(sizeof(Creep) * level.creepCount);
     for(creepIndex = 0; creepIndex < level.creepCount; creepIndex++){
       Creep creep;
       creep.health = creepFullHealth;
       creep.currentRule = 0;
       creep.traveled = 0;
-      creep.initialPosition = GPoint(buffer[bufferIndex++], buffer[bufferIndex++]);
-      creep.bounds = GRect(creep.initialPosition.x, creep.initialPosition.y,
-        creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
+      x = buffer[bufferIndex++];
+      y = buffer[bufferIndex++];
+      creep.initialPosition = GPoint(x, y);
+      creep.bounds = GRect(x, y, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
       creep.ruleCount = buffer[bufferIndex++];
-      //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Rule count: %i", creep.ruleCount);
       creep.rules = malloc(sizeof(MovementRule) * creep.ruleCount);
       for(ruleIndex = 0; ruleIndex < creep.ruleCount; ruleIndex++){
-        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Building rule %i", ruleIndex);
         MovementRule rule;
-        int dx = getBufferInt(buffer, bufferIndex++);
-        int dy = getBufferInt(buffer, bufferIndex++);
+        dx = getBufferInt(buffer, bufferIndex++);
+        dy = getBufferInt(buffer, bufferIndex++);
         rule.delta = GPoint(dx, dy);
-        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Buffer check (%i,%i)", dx, dy);
-        //app_log(APP_LOG_LEVEL_INFO, "main", 513, "Rule count (%i,%i)", rule.delta.x, rule.delta.y);
         rule.conditionType = buffer[bufferIndex++];
         rule.distance = buffer[bufferIndex++];
         creep.rules[ruleIndex] = rule;
@@ -573,13 +576,17 @@ void loadMovementRules() {
     }
     game.levels[levelIndex] = level; 
   }
-// i love you honey
+  // i love you honey
 }
 
 void handle_init(void) {
   
   game.state = GetReadyState;
   game.currentLevel = 0;
+
+  player.armor = INITIAL_SHIP_ARMOR;
+  player.fullArmor = INITIAL_SHIP_ARMOR;
+  player.money = INITIAL_MONEY;
 
   // Init Window
   window = window_create();
@@ -603,7 +610,11 @@ void handle_init(void) {
   // Init walls
   rightWall = windowBounds.size.w - padding - ship->bounds.size.w;
   leftWall = padding + ship->bounds.size.w;
+  topWall = 16;
+  bottomWall = 50;
   bottom = windowBounds.size.h - ship->bounds.size.h - padding;
+
+  app_log(APP_LOG_LEVEL_INFO, "main", 513, "Size (%d,%d) Left: %d, Right: %d", windowBounds.size.w, windowBounds.size.h, leftWall, rightWall);
 
   // Place ship in bottom center
   shipBounds = GRect(
@@ -632,8 +643,7 @@ void handle_deinit() {
   gbitmap_destroy(creepWeakBitmap);
   layer_destroy(layer);
   window_destroy(window);
-  
-  int levelIndex, creepIndex, ruleIndex;
+  int levelIndex, creepIndex;
   for(levelIndex = 0; levelIndex < game.levelCount; levelIndex++){
     for(creepIndex = 0; creepIndex < game.levels[levelIndex].creepCount; creepIndex++){
       free(game.levels[levelIndex].creeps[creepIndex].rules);
