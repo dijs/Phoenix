@@ -8,7 +8,7 @@
 #define ABS(a) ((a > 0) ? (a) : (-a))
 
 #define CREEP_INITIAL_SCORE 10
-#define EXTRA_LIFE_SELECTION 0
+#define ARMOR_SELECTION 0
 #define POWER_UP_SELECTION 1
 #define DOUBLE_GUN_SELECTION 2
 #define TRIPLE_GUN_SELECTION 3
@@ -24,14 +24,14 @@
 #define BULLET_WIDTH 2
 #define MAX_PLAYER_BULLETS 64
 #define MAX_CREEP_BULLETS 64
-#define ACCEL_MID 16 // started with 32...
+#define ACCEL_MID 16
 #define INITIAL_MONEY 100
 #define INITIAL_GUN_POWER 1
 #define ASCII_ZERO 48
 #define WALL 0
 #define DISTANCE 1
-
-// test a lot!
+#define MAX_ARMOR 10
+#define MAX_POWER 10
 
 typedef enum { LevelState, StoreState, GetReadyState, GameOverState, TipState } GameState;
 
@@ -190,13 +190,22 @@ void firePlayerGun(){
   bool isDouble = gunType == DOUBLE_GUN;
   bool isDefault = gunType == DEFAULT_GUN;
   int x = shipBounds.origin.x + ship->bounds.size.w / 2;
-  if(isDefault || isTriple){
+
+  if(isDefault){
     firePlayerGunAt(x, bottom, 0, -1);
   }
-  if(isDouble || isTriple){
+  
+  if(isDouble){
+    firePlayerGunAt(x - 2, bottom, 0, -1);
+    firePlayerGunAt(x + 2, bottom, 0, -1);
+  }
+  
+  if(isTriple){
     firePlayerGunAt(x - 2, bottom, -1, -1);
+    firePlayerGunAt(x, bottom, 0, -1);
     firePlayerGunAt(x + 2, bottom, 1, -1);
   }
+
   // Change this for gun speed power up
   lastPlayerFireTime = SHIP_FIRE_TIME_LAG;
 }
@@ -382,7 +391,7 @@ void drawBoldText(GContext* ctx, const char* text, GRect rect){
 
 void drawScoreAndLevel(GContext* ctx){
   snprintf(moneyText, 12, "$%d", player.money);
-  snprintf(levelText, 8, "Lvl %d", game.currentLevel + 1);
+  snprintf(levelText, 12, "Lvl %d", game.currentLevel + 1);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
   drawText(ctx, moneyText, GRect(windowBounds.size.w - 32, 2, 32, 8));
   if(game.state == GameOverState){
@@ -406,6 +415,7 @@ void drawStore(GContext* ctx){
   int left = 16;
   int right = windowBounds.size.w - 32;
   int lineHeight = 8;
+  int farRight = windowBounds.size.w - padding / 2;
 
   drawBoldText(ctx, "Store", GRect(2, 16, 64, lineHeight));
 
@@ -414,21 +424,33 @@ void drawStore(GContext* ctx){
 
   drawText(ctx, "Armor", GRect(left, y, 64, lineHeight));
   drawText(ctx, "$100", GRect(right, y, 32, lineHeight));
+  if(player.fullArmor == MAX_ARMOR){
+    graphics_draw_line(ctx, GPoint(left, y + lineHeight + 1), GPoint(farRight, y + lineHeight + 1));
+  }
 
   y += lineHeight * 2;
 
   drawText(ctx, "Power Up", GRect(left, y, 64, lineHeight));
   drawText(ctx, "$200", GRect(right, y, 32, lineHeight));
+  if(currentGunPower == MAX_POWER){
+    graphics_draw_line(ctx, GPoint(left, y + lineHeight + 1), GPoint(farRight, y + lineHeight + 1));
+  }
 
   y += lineHeight * 2;
 
   drawText(ctx, "Double Gun", GRect(left, y, 64, lineHeight));
   drawText(ctx, "$300", GRect(right, y, 32, lineHeight));
+  if(gunType == DOUBLE_GUN){
+    graphics_draw_line(ctx, GPoint(left, y + lineHeight + 1), GPoint(farRight, y + lineHeight + 1));
+  }
 
   y += lineHeight * 2;
 
   drawText(ctx, "Triple Gun", GRect(left, y, 64, lineHeight));
   drawText(ctx, "$500", GRect(right, y, 32, lineHeight));
+  if(gunType == TRIPLE_GUN){
+    graphics_draw_line(ctx, GPoint(left, y + lineHeight + 1), GPoint(farRight, y + lineHeight + 1));
+  }
 
   y += lineHeight * 2;
 
@@ -496,6 +518,30 @@ void layer_update_callback(Layer *me, GContext* ctx) {
   }
 }
 
+bool tryPurchaseSelection(){
+  if(player.money < storeSelectionCosts[storeSelection]) return false;
+  switch(storeSelection){
+    case ARMOR_SELECTION:
+      if(player.fullArmor == MAX_ARMOR) return false;
+      player.fullArmor++;
+      break;
+    case POWER_UP_SELECTION:
+      if(currentGunPower == MAX_POWER) return false;
+      currentGunPower++;
+      break;
+    case DOUBLE_GUN_SELECTION:
+      if(gunType == DOUBLE_GUN) return false;
+      gunType = DOUBLE_GUN;
+      break;
+    case TRIPLE_GUN_SELECTION:
+      if(gunType == TRIPLE_GUN) return false;
+      gunType = TRIPLE_GUN;
+      break;
+  }
+  player.money -= storeSelectionCosts[storeSelection];
+  return true;
+}
+
 void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   if(game.state == TipState){
     game.state = GetReadyState;
@@ -515,31 +561,10 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   }
   if(game.state == StoreState){
     if(storeSelection == DONE_SELECTION){
-      game.state = GetReadyState;
       resetLevel();
+      game.state = GetReadyState;
     }else{
-      if(player.money >= storeSelectionCosts[storeSelection]){
-        // Make purchase
-        player.money -= storeSelectionCosts[storeSelection];
-        switch(storeSelection){
-          case EXTRA_LIFE_SELECTION:
-            player.fullArmor++;
-            break;
-          case POWER_UP_SELECTION:
-            // Need max...
-            currentGunPower++;
-            break;
-          case DOUBLE_GUN_SELECTION:
-            gunType = DOUBLE_GUN;
-            break;
-          case TRIPLE_GUN_SELECTION:
-            gunType = TRIPLE_GUN;
-            break;
-        }
-      }else{
-        // Does not have enough monies
-        vibes_short_pulse();
-      }
+      if(!tryPurchaseSelection()) vibes_short_pulse();
     }
   }
 }
