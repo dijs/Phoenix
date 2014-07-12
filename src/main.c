@@ -31,10 +31,6 @@
 #define WALL 0
 #define DISTANCE 1
 
-// fix movement differences...
-
-// create and load more levels
-// after beating the n levels, make them harder with a multiplier...
 // test a lot!
 
 typedef enum { LevelState, StoreState, GetReadyState, GameOverState, TipState } GameState;
@@ -60,6 +56,7 @@ int lastPlayerFireTime = 0;
 
 int creepScore = CREEP_INITIAL_SCORE;
 int creepsLeft;
+int creepHealthMultiplier = 1;
 
 char moneyText[12];
 char levelText[8];
@@ -232,7 +229,7 @@ void resetLevel(){
   creepsLeft = level->creepCount;
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
-    creep->health = creep->fullHealth;
+    creep->health = creep->fullHealth * creepHealthMultiplier;
     resetCreepMovement(creep);
   }
   forEachPlayerBullet(hideBullet);
@@ -242,8 +239,9 @@ void resetLevel(){
 
 void handleLevelWin(){
   game.currentLevel++;
-  creepScore += 5;
+  creepScore += 10;
   storeSelection = 0;
+  if(game.currentLevel % game.levelCount == 0) creepHealthMultiplier++;
   game.state = StoreState;
 }
 
@@ -307,7 +305,7 @@ void updateCreepMovement(Creep* creep){
   creep->bounds.origin.y += rule->delta.y;
   creep->traveled += ABS(rule->delta.x) + ABS(rule->delta.y);
   bool outsideWall = rule->conditionType == WALL && creepOutsideBounds(creep);
-  bool atDistance = rule->conditionType == DISTANCE && creep->traveled >= rule->distance;
+  bool atDistance = rule->conditionType == DISTANCE && creep->traveled > rule->distance;
   // Cycle to next rule if needed
   if(outsideWall || atDistance){
     creep->currentRule = (creep->currentRule + 1) % creep->ruleCount;
@@ -548,8 +546,6 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
 
 void up_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   if(game.state == StoreState){
-    // try to use modulous again
-    storeSelection = (storeSelection - 1) % 4; 
     if(storeSelection == 0){
       storeSelection = 4;
     }else{
@@ -666,7 +662,7 @@ void handle_init(void) {
   // Init walls
   rightWall = windowBounds.size.w - padding - ship->bounds.size.w;
   leftWall = padding + ship->bounds.size.w;
-  topWall = 16;
+  topWall = 20;
   bottomWall = 50;
   bottom = windowBounds.size.h - ship->bounds.size.h - padding;
 
