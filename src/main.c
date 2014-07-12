@@ -33,6 +33,12 @@
 #define MAX_ARMOR 10
 #define MAX_POWER 10
 
+#define SAVED_DATA_LEVEL_KEY 101
+#define SAVED_DATA_MONEY_KEY 102
+#define SAVED_DATA_ARMOR_KEY 103
+#define SAVED_DATA_GUN_KEY 104
+#define SAVED_DATA_POWER_KEY 105
+
 typedef enum { LevelState, StoreState, GetReadyState, GameOverState, TipState } GameState;
 
 Window* window;
@@ -126,6 +132,24 @@ GPoint weakPoints[10] = {
 
 Game game;
 Player player;
+
+void saveState(){
+  persist_write_int(SAVED_DATA_LEVEL_KEY, game.currentLevel);
+  persist_write_int(SAVED_DATA_MONEY_KEY, player.money);
+  persist_write_int(SAVED_DATA_ARMOR_KEY, player.fullArmor);
+  persist_write_int(SAVED_DATA_GUN_KEY, gunType);
+  persist_write_int(SAVED_DATA_POWER_KEY, currentGunPower);
+}
+
+void loadState(){
+  if(persist_exists(SAVED_DATA_LEVEL_KEY)){
+    game.currentLevel = persist_read_int(SAVED_DATA_LEVEL_KEY);
+    player.money = persist_read_int(SAVED_DATA_MONEY_KEY);
+    player.fullArmor = persist_read_int(SAVED_DATA_ARMOR_KEY);
+    gunType = persist_read_int(SAVED_DATA_GUN_KEY);
+    currentGunPower = persist_read_int(SAVED_DATA_POWER_KEY);
+  }
+}
 
 void forEachPlayerBullet(void (*f)(Bullet*)){
   for(int index = 0; index < MAX_PLAYER_BULLETS; index++)
@@ -562,6 +586,7 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   if(game.state == StoreState){
     if(storeSelection == DONE_SELECTION){
       resetLevel();
+      saveState();
       game.state = GetReadyState;
     }else{
       if(!tryPurchaseSelection()) vibes_short_pulse();
@@ -662,6 +687,8 @@ void handle_init(void) {
   player.armor = INITIAL_SHIP_ARMOR;
   player.fullArmor = INITIAL_SHIP_ARMOR;
   player.money = INITIAL_MONEY;
+
+  loadState();
 
   // Init Window
   window = window_create();
