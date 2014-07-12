@@ -31,7 +31,13 @@
 #define WALL 0
 #define DISTANCE 1
 
-typedef enum { LevelState, StoreState, GetReadyState, GameOverState } GameState;
+// add new player ship graphic
+// add new enemy ship graphics
+// create and load more levels
+// after beating the n levels, make them harder with a multiplier...
+// test a lot!
+
+typedef enum { LevelState, StoreState, GetReadyState, GameOverState, TipState } GameState;
 
 Window *window;
 Layer *windowLayer;
@@ -40,6 +46,7 @@ GBitmap *ship;
 GBitmap *creepBitmap;
 GBitmap *shipWeakBitmap;
 GBitmap *creepWeakBitmap;
+GBitmap *tipBitmap;
 AppTimer *timer;
 GRect windowBounds;
 GRect shipBounds;
@@ -52,8 +59,6 @@ int rightWall, leftWall, topWall, bottomWall;
 int bottom;
 
 int lastPlayerFireTime = 0;
-
-int creepFullHealth = 2;
 
 int creepScore = CREEP_INITIAL_SCORE;
 int creepsLeft;
@@ -89,6 +94,7 @@ typedef struct {
   int ruleCount;
   int currentRule;
   int traveled;
+  int fullHealth;
 } Creep;
 
 typedef struct {
@@ -202,16 +208,24 @@ void hideBullet(Bullet* bullet){
   bullet->visible = false;
 }
 
+Level* getCurrentLevel(){
+  return &game.levels[game.currentLevel % game.levelCount];  
+}
+
+void resetCreepMovement(Creep* creep){
+  creep->currentRule = 0;
+  creep->traveled = 0;
+  creep->bounds.origin.x = creep->initialPosition.x;
+  creep->bounds.origin.y = creep->initialPosition.y; 
+}
+
 void resetLevel(){
-  Level* level = &game.levels[game.currentLevel];
+  Level* level = getCurrentLevel();
   creepsLeft = level->creepCount;
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
-    creep->health = creepFullHealth;
-    creep->currentRule = 0;
-    creep->traveled = 0;
-    creep->bounds.origin.x = creep->initialPosition.x;
-    creep->bounds.origin.y = creep->initialPosition.y; 
+    creep->health = creep->fullHealth;
+    resetCreepMovement(creep);
   }
   forEachPlayerBullet(hideBullet);
   forEachCreepBullet(hideBullet);
@@ -220,7 +234,6 @@ void resetLevel(){
 
 void handleLevelWin(){
   game.currentLevel++;
-  creepFullHealth++;
   creepScore += 5;
   storeSelection = 0;
   game.state = StoreState;
@@ -257,7 +270,7 @@ bool checkForCreepHit(Creep* creep){
 }
 
 bool creepShouldFire(Creep* creep){
-  return creep->health > 0 && (rand() % 1000) < 5;
+  return creep->health > 0 && (rand() % 1000) < 10;
 }
 
 void handlePlayerHit(Bullet* bullet){
@@ -292,10 +305,14 @@ void updateCreepMovement(Creep* creep){
     creep->currentRule = (creep->currentRule + 1) % creep->ruleCount;
     creep->traveled = 0;
   }
+  // check if we need a reset
+  if(creep->bounds.origin.y > windowBounds.size.h){
+    resetCreepMovement(creep);
+  }
 }
 
 void updateCreeps(){
-  Level* level = &game.levels[game.currentLevel];
+  Level* level = getCurrentLevel();
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
     if(isCreepAlive(creep)){
@@ -319,7 +336,7 @@ void drawCreepBullets(GContext* ctx){
 }
 
 void drawCreeps(GContext* ctx){
-  Level* level = &game.levels[game.currentLevel];
+  Level* level = getCurrentLevel();
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
     if(isCreepAlive(creep)){
@@ -448,19 +465,27 @@ void timer_callback(void *data) {
 // Draw
 void layer_update_callback(Layer *me, GContext* ctx) {
   graphics_context_set_text_color(ctx, GColorBlack);
-  drawScoreAndLevel(ctx);
-  if(game.state == LevelState || game.state == GetReadyState){
-    drawShip(ctx);
-    drawArmorBar(ctx);
-    drawPlayerBullets(ctx);
-    drawCreepBullets(ctx);
-    drawCreeps(ctx);
+  if(game.state == TipState){
+    graphics_draw_bitmap_in_rect(ctx, tipBitmap, tipBitmap->bounds);
+    drawText(ctx, "Press any button...", GRect(28, windowBounds.size.h - 32, 128, 8));
+  }else{
+    drawScoreAndLevel(ctx);
+    if(game.state == LevelState || game.state == GetReadyState){
+      drawShip(ctx);
+      drawArmorBar(ctx);
+      drawPlayerBullets(ctx);
+      drawCreepBullets(ctx);
+      drawCreeps(ctx);
+    }
+    if(game.state == GetReadyState) drawGetReady(ctx);
+    if(game.state == StoreState) drawStore(ctx);
   }
-  if(game.state == GetReadyState) drawGetReady(ctx);
-  if(game.state == StoreState) drawStore(ctx);
 }
 
 void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
+  if(game.state == TipState){
+    game.state = GetReadyState;
+  }
   if(game.state == GameOverState){
     player.money = INITIAL_MONEY;
     player.armor = INITIAL_SHIP_ARMOR;
@@ -506,18 +531,30 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
 }
 
 void up_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if(storeSelection == 0){
-    storeSelection = 4;
-  }else{
-    storeSelection--;
+  if(game.state == StoreState){
+    // try to use modulous again
+    storeSelection = (storeSelection - 1) % 4; 
+    if(storeSelection == 0){
+      storeSelection = 4;
+    }else{
+      storeSelection--;
+    }
+  }
+  if(game.state == TipState){
+    game.state = GetReadyState;
   }
 }
 
 void down_single_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if(storeSelection == 4){
-    storeSelection = 0;
-  }else{
-    storeSelection++;
+  if(game.state == StoreState){
+    if(storeSelection == 4){
+      storeSelection = 0;
+    }else{
+      storeSelection++;
+    }
+  }
+  if(game.state == TipState){
+    game.state = GetReadyState;
   }
 }
 
@@ -553,11 +590,12 @@ void loadMovementRules() {
     level.creeps = malloc(sizeof(Creep) * level.creepCount);
     for(creepIndex = 0; creepIndex < level.creepCount; creepIndex++){
       Creep creep;
-      creep.health = creepFullHealth;
       creep.currentRule = 0;
       creep.traveled = 0;
       x = buffer[bufferIndex++];
       y = buffer[bufferIndex++];
+      creep.fullHealth = buffer[bufferIndex++];
+      creep.health = creep.fullHealth;
       creep.initialPosition = GPoint(x, y);
       creep.bounds = GRect(x, y, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
       creep.ruleCount = buffer[bufferIndex++];
@@ -580,7 +618,7 @@ void loadMovementRules() {
 
 void handle_init(void) {
   
-  game.state = GetReadyState;
+  game.state = TipState;
   game.currentLevel = 0;
 
   player.armor = INITIAL_SHIP_ARMOR;
@@ -603,6 +641,7 @@ void handle_init(void) {
   creepBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_IMAGE);
   shipWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_SHIP_WEAK_IMAGE);
   creepWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_WEAK_IMAGE);
+  tipBitmap = gbitmap_create_with_resource(RESOURCE_ID_TIP_IMAGE);
   
   loadMovementRules();
 

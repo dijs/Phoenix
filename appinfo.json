@@ -6,7 +6,7 @@
     "versionCode": 1,
     "appKeys": {},
     "longName": "Phoenix",
-    "versionLabel": "1.0",
+    "versionLabel": "1.1",
     "companyName": "Richard van der Dys",
     "resources": {
         "media": [
@@ -14,6 +14,11 @@
                 "file": "movement/rules.bin",
                 "name": "MOVEMENT_RULES",
                 "type": "raw"
+            },
+            {
+                "file": "images/tip.png",
+                "name": "TIP_IMAGE",
+                "type": "png"
             },
             {
                 "file": "images/menu.png",
