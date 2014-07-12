@@ -27,23 +27,28 @@
                 "type": "png"
             },
             {
-                "file": "images/creep_weak.png",
-                "name": "CREEP_WEAK_IMAGE",
+                "file": "images/player_ship.png",
+                "name": "PLAYER_SHIP_IMAGE",
                 "type": "png"
             },
             {
-                "file": "images/ship_weak.png",
-                "name": "SHIP_WEAK_IMAGE",
+                "file": "images/creep_1.png",
+                "name": "CREEP_1_IMAGE",
                 "type": "png"
             },
             {
-                "file": "images/creep.png",
-                "name": "CREEP_IMAGE",
+                "file": "images/creep_2.png",
+                "name": "CREEP_2_IMAGE",
                 "type": "png"
             },
             {
-                "file": "images/ship.png",
-                "name": "SHIP_IMAGE",
+                "file": "images/creep_3.png",
+                "name": "CREEP_3_IMAGE",
+                "type": "png"
+            },
+            {
+                "file": "images/creep_4.png",
+                "name": "CREEP_4_IMAGE",
                 "type": "png"
             }
         ]

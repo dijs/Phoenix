@@ -31,23 +31,21 @@
 #define WALL 0
 #define DISTANCE 1
 
-// add new player ship graphic
-// add new enemy ship graphics
+// fix movement differences...
+
 // create and load more levels
 // after beating the n levels, make them harder with a multiplier...
 // test a lot!
 
 typedef enum { LevelState, StoreState, GetReadyState, GameOverState, TipState } GameState;
 
-Window *window;
-Layer *windowLayer;
-Layer *layer;
-GBitmap *ship;
-GBitmap *creepBitmap;
-GBitmap *shipWeakBitmap;
-GBitmap *creepWeakBitmap;
-GBitmap *tipBitmap;
-AppTimer *timer;
+Window* window;
+Layer* windowLayer;
+Layer* layer;
+GBitmap* ship;
+GBitmap* creepBitmap[4];
+GBitmap* tipBitmap;
+AppTimer* timer;
 GRect windowBounds;
 GRect shipBounds;
 GRect bulletBounds;
@@ -95,6 +93,7 @@ typedef struct {
   int currentRule;
   int traveled;
   int fullHealth;
+  int type;
 } Creep;
 
 typedef struct {
@@ -122,6 +121,11 @@ int gunType = DEFAULT_GUN;
 int currentPlayerBullet = 0;
 int currentGunPower = INITIAL_GUN_POWER;
 int currentCreepBullet = 0;
+
+GPoint weakPoints[10] = {
+  {0,4}, {1,1}, {1,7}, {2,5}, {3,4},
+  {3,7}, {4,0}, {5,4}, {6,1}, {6,7}
+};
 
 Game game;
 Player player;
@@ -202,6 +206,10 @@ void firePlayerGun(){
 
 bool playerGunReady(){
   return !lastPlayerFireTime--;
+}
+
+bool isPlayerWeak(){
+  return player.armor == 0;
 }
 
 void hideBullet(Bullet* bullet){
@@ -335,12 +343,19 @@ void drawCreepBullets(GContext* ctx){
       graphics_fill_circle(ctx, creepBullets[i].pos, BULLET_RADIUS);
 }
 
+void drawWeak(GContext* ctx, GPoint origin){
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  for(int i = 0; i < 10; i++)
+    graphics_draw_pixel(ctx, GPoint(origin.x + weakPoints[i].x, origin.y + weakPoints[i].y));
+}
+
 void drawCreeps(GContext* ctx){
   Level* level = getCurrentLevel();
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
     if(isCreepAlive(creep)){
-      graphics_draw_bitmap_in_rect(ctx, isCreepWeak(creep) ? creepWeakBitmap : creepBitmap, creep->bounds);
+      graphics_draw_bitmap_in_rect(ctx, creepBitmap[creep->type], creep->bounds);
+      if(isCreepWeak(creep)) drawWeak(ctx, creep->bounds.origin);
     }
   }
 }
@@ -424,7 +439,8 @@ void drawStore(GContext* ctx){
 }
 
 void drawShip(GContext* ctx) {
-  graphics_draw_bitmap_in_rect(ctx, player.armor == 0 ? shipWeakBitmap : ship, shipBounds);
+  graphics_draw_bitmap_in_rect(ctx, ship, shipBounds);
+  if(isPlayerWeak()) drawWeak(ctx, shipBounds.origin);
 }
 
 void drawArmorBar(GContext* ctx) {
@@ -596,8 +612,9 @@ void loadMovementRules() {
       y = buffer[bufferIndex++];
       creep.fullHealth = buffer[bufferIndex++];
       creep.health = creep.fullHealth;
+      creep.type = buffer[bufferIndex++];
       creep.initialPosition = GPoint(x, y);
-      creep.bounds = GRect(x, y, creepBitmap->bounds.size.w, creepBitmap->bounds.size.h);
+      creep.bounds = GRect(x, y, creepBitmap[creep.type]->bounds.size.w, creepBitmap[creep.type]->bounds.size.h);
       creep.ruleCount = buffer[bufferIndex++];
       creep.rules = malloc(sizeof(MovementRule) * creep.ruleCount);
       for(ruleIndex = 0; ruleIndex < creep.ruleCount; ruleIndex++){
@@ -637,10 +654,11 @@ void handle_init(void) {
   layer_add_child(windowLayer, layer);
 
   // Load resources
-  ship = gbitmap_create_with_resource(RESOURCE_ID_SHIP_IMAGE);
-  creepBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_IMAGE);
-  shipWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_SHIP_WEAK_IMAGE);
-  creepWeakBitmap = gbitmap_create_with_resource(RESOURCE_ID_CREEP_WEAK_IMAGE);
+  ship = gbitmap_create_with_resource(RESOURCE_ID_PLAYER_SHIP_IMAGE);
+  creepBitmap[0] = gbitmap_create_with_resource(RESOURCE_ID_CREEP_1_IMAGE);
+  creepBitmap[1] = gbitmap_create_with_resource(RESOURCE_ID_CREEP_2_IMAGE);
+  creepBitmap[2] = gbitmap_create_with_resource(RESOURCE_ID_CREEP_3_IMAGE);
+  creepBitmap[3] = gbitmap_create_with_resource(RESOURCE_ID_CREEP_4_IMAGE);
   tipBitmap = gbitmap_create_with_resource(RESOURCE_ID_TIP_IMAGE);
   
   loadMovementRules();
@@ -676,9 +694,7 @@ void handle_init(void) {
 void handle_deinit() {
   accel_data_service_unsubscribe();
   gbitmap_destroy(ship);
-  gbitmap_destroy(creepBitmap);
-  gbitmap_destroy(shipWeakBitmap);
-  gbitmap_destroy(creepWeakBitmap);
+  for(int i = 0; i < 4; i++) gbitmap_destroy(creepBitmap[i]);
   layer_destroy(layer);
   window_destroy(window);
   int levelIndex, creepIndex;
