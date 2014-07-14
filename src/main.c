@@ -62,7 +62,6 @@ int lastPlayerFireTime = 0;
 
 int creepScore = CREEP_INITIAL_SCORE;
 int creepsLeft;
-int creepHealthMultiplier = 1;
 
 char moneyText[12];
 char levelText[8];
@@ -262,6 +261,7 @@ void resetLevel(){
   creepsLeft = level->creepCount;
   for(int index = 0; index < level->creepCount; index++){
     Creep* creep = &level->creeps[index];
+    int creepHealthMultiplier = (game.currentLevel / game.levelCount) + 1;
     creep->health = creep->fullHealth * creepHealthMultiplier;
     resetCreepMovement(creep);
   }
@@ -271,11 +271,11 @@ void resetLevel(){
 }
 
 void handleLevelWin(){
-  game.currentLevel++;
   creepScore += 10;
   storeSelection = 0;
-  if(game.currentLevel % game.levelCount == 0) creepHealthMultiplier++;
   game.state = StoreState;
+  game.currentLevel++;
+  saveState();
 }
 
 bool isCreepAlive(Creep* creep){
@@ -417,7 +417,11 @@ void drawScoreAndLevel(GContext* ctx){
   snprintf(moneyText, 12, "$%d", player.money);
   snprintf(levelText, 12, "Lvl %d", game.currentLevel + 1);
   drawText(ctx, levelText, GRect(2, 2, 64, 8));
-  drawText(ctx, moneyText, GRect(windowBounds.size.w - 32, 2, 32, 8));
+  int x = 16;
+  if(player.money > 9) x += 8;
+  if(player.money > 99) x += 8;
+  if(player.money > 999) x += 8;
+  drawText(ctx, moneyText, GRect(windowBounds.size.w - x, 2, 48, 8));
   if(game.state == GameOverState){
     drawBoldText(ctx, "Press select to play again", GRect(16, 32, 128, 32));
   }
@@ -586,7 +590,6 @@ void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
   if(game.state == StoreState){
     if(storeSelection == DONE_SELECTION){
       resetLevel();
-      saveState();
       game.state = GetReadyState;
     }else{
       if(!tryPurchaseSelection()) vibes_short_pulse();
